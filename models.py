@@ -87,8 +87,8 @@ def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
     return x + res
 
 def build_transformer_model(n_steps_in, n_steps_out, number_of_features, model_params):
-        num_heads = model_params.get('num_heads', 8) #tunable
-        head_size = model_params.get('head_size', 12)#tunable
+        num_heads = model_params.get('num_heads', 7) #tunable
+        head_size = model_params.get('head_size', 7)#tunable
         ff_dim = model_params.get('ff_dim', 128)
         dropout_rate = model_params.get('dropout_rate', 0.1)
         num_transformer_blocks = model_params.get('num_transformer_blocks', 6)  #tunable
