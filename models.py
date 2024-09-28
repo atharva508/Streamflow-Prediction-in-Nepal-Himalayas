@@ -95,7 +95,7 @@ def build_transformer_model(n_steps_in, n_steps_out, number_of_features, model_p
         dropout_rate = model_params.get('dropout_rate', 0.1)
         num_transformer_blocks = model_params.get('num_transformer_blocks', 6)  #tunable
         mlp_units=model_params.get('mlp_units', [128])#tunable
-
+        mlp_dropout_rate = model_params.get('mlp_dropout_rate', 0.3)
         inputs = keras.Input(shape=(n_steps_in,number_of_features))
         x = inputs
 
@@ -110,8 +110,8 @@ def build_transformer_model(n_steps_in, n_steps_out, number_of_features, model_p
         
         for dim in mlp_units:
             x = Dense(dim, activation="relu")(x)
-            x = Dropout(dropout_rate)(x)
-        outputs = Dense(n_steps_out, activation="softmax")(x)
+            x = Dropout(mlp_dropout_rate)(x)
+        outputs = Dense(n_steps_out)(x)
         return keras.Model(inputs, outputs)
     
 
