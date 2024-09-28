@@ -113,6 +113,60 @@ def build_transformer_model(n_steps_in, n_steps_out, number_of_features, model_p
             x = Dropout(mlp_dropout_rate)(x)
         outputs = Dense(n_steps_out)(x)
         return keras.Model(inputs, outputs)
+
+class CLSTokenLayer(tf.keras.layers.Layer):
+    def __init__(self, number_of_features, **kwargs):
+        super(CLSTokenLayer, self).__init__(**kwargs)
+        self.number_of_features = number_of_features
+
+    def build(self, input_shape):
+        # Initialize the CLS token as a trainable weight
+        self.cls_token = self.add_weight(
+            shape=(1, 1, self.number_of_features),
+            initializer="random_normal",
+            trainable=True,
+            name="cls_token"
+        )
+
+    def call(self, inputs):
+        # Expand the CLS token to match the batch size and concatenate it at the end
+        batch_size = tf.shape(inputs)[0]
+        cls_token_batched = tf.tile(self.cls_token, [batch_size, 1, 1])
+        return Concatenate(axis=1)([inputs, cls_token_batched])
+                                   
+def build_transformer_model_cls(n_steps_in, n_steps_out, number_of_features, model_params):
+    num_heads = model_params.get('num_heads', 7)  # tunable
+    head_size = model_params.get('head_size', 7)  # tunable
+    ff_dim = model_params.get('ff_dim', 128)
+    dropout_rate = model_params.get('dropout_rate', 0.1)
+    num_transformer_blocks = model_params.get('num_transformer_blocks', 6)  # tunable
+    mlp_units = model_params.get('mlp_units', [128])  # tunable
+    mlp_dropout_rate = model_params.get('mlp_dropout_rate', 0.3)
+    inputs = Input(shape=(n_steps_in, number_of_features))
+    
+   
+    # Concatenate the CLS token to the inputs
+    x = CLSTokenLayer(number_of_features)(inputs)
+
+    # Generate and add positional encoding
+    pos_encoding = positional_encoding(n_steps_in + 1, number_of_features)  # Adjust for the added CLS token
+    x = x + pos_encoding  # Add positional encoding to the inputs with the CLS token
+
+    # Pass through multiple Transformer blocks
+    for _ in range(num_transformer_blocks):
+        x = transformer_encoder(x, head_size, num_heads, ff_dim, dropout_rate)
+
+    # Use the CLS token's output for classification or other tasks
+    cls_output = x[:, -1, :]  # Extract the CLS token output
+    print(cls_output.shape)
+    
+    # Fully connected layers on top of the CLS token output
+    for dim in mlp_units:
+        cls_output = Dense(dim, activation="relu")(cls_output)
+        cls_output = Dropout(mlp_dropout_rate)(cls_output)
+    
+    outputs = Dense(n_steps_out)(cls_output)
+    return keras.Model(inputs, outputs)
     
 
 def build_tcn_model(n_steps_in, n_steps_out, number_of_features, model_params):
