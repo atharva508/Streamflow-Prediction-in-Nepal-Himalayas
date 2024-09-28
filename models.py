@@ -6,7 +6,7 @@ from keras.layers import (
     Dense, LSTM, GRU, Dropout, Input, Conv1D, MaxPooling1D,
     Flatten, TimeDistributed, Bidirectional, LayerNormalization,
     SimpleRNN, Attention, BatchNormalization, Activation,
-    RepeatVector, Reshape, Embedding, MultiHeadAttention
+    RepeatVector, Reshape, Embedding, MultiHeadAttention,Add,Concatenate
 )
 import keras
 import losses  # To access loss functions and metrics if needed
@@ -76,15 +76,17 @@ def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
         key_dim=head_size, num_heads=num_heads, dropout=dropout
     )(inputs, inputs)
     x = Dropout(dropout)(x)
-    x = LayerNormalization(epsilon=1e-6)(x)
-    res = x + inputs
+    x = Add()([x, inputs])
+    res = LayerNormalization(epsilon=1e-6)(x)#add and norm
+    
 
     # Feed Forward Part
     x = Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(res)
     x = Dropout(dropout)(x)
     x = Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
-    x = LayerNormalization(epsilon=1e-6)(x)
-    return x + res
+    x = Add()([x, res])
+    x = LayerNormalization(epsilon=1e-6)(x)# add and norm
+    return x
 
 def build_transformer_model(n_steps_in, n_steps_out, number_of_features, model_params):
         num_heads = model_params.get('num_heads', 7) #tunable
