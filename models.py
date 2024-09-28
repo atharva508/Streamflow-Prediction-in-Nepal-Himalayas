@@ -159,7 +159,6 @@ def build_transformer_model_cls(n_steps_in, n_steps_out, number_of_features, mod
 
     # Use the CLS token's output for classification or other tasks
     cls_output = x[:, -1, :]  # Extract the CLS token output
-    print(cls_output.shape)
     
     # Fully connected layers on top of the CLS token output
     for dim in mlp_units:
