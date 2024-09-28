@@ -6,9 +6,10 @@ from keras.layers import (
     Dense, LSTM, GRU, Dropout, Input, Conv1D, MaxPooling1D,
     Flatten, TimeDistributed, Bidirectional, LayerNormalization,
     SimpleRNN, Attention, BatchNormalization, Activation,
-    RepeatVector, Reshape, Embedding, MultiHeadAttention,Add,Concatenate
+    RepeatVector, Reshape, Embedding, MultiHeadAttention,Add,Concatenate,GlobalAveragePooling1D
 )
 import keras
+import numpy as np
 import losses  # To access loss functions and metrics if needed
 
 def get_model(config, number_of_features):
