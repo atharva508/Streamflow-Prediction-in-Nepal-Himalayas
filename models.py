@@ -114,8 +114,8 @@ def transformer_encoder(inputs, head_size, num_heads, ff_dim, hidden_dim, dropou
 def build_transformer_model_with_temporal_embeddings(
     n_steps_in, n_steps_out, number_of_features, num_time_features, model_params
 ):
-    num_heads = model_params.get('num_heads', 7)  # Tunable
-    head_size = model_params.get('head_size', 7)  # Tunable
+    num_heads = model_params.get('num_heads', 8)  # Tunable
+    head_size = model_params.get('head_size', 16)  # Tunable
     ff_dim = model_params.get('ff_dim', 128)
     dropout_rate = model_params.get('dropout_rate', 0.1)
     num_transformer_blocks = model_params.get('num_transformer_blocks', 6)  # Tunable
