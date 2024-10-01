@@ -120,7 +120,7 @@ def build_transformer_model_with_temporal_embeddings(
     dropout_rate = model_params.get('dropout_rate', 0.1)
     num_transformer_blocks = model_params.get('num_transformer_blocks', 6)  # Tunable
     mlp_units = model_params.get('mlp_units', [128])  # Tunable
-    mlp_dropout_rate = model_params.get('mlp_dropout_rate', 0.3)
+    mlp_dropout_rate = model_params.get('mlp_dropout_rate', 0)
     hidden_dim = model_params.get('hidden_dim', 128)  # Dimension of model hidden layer
 
     # Inputs
