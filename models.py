@@ -6,11 +6,12 @@ from keras.layers import (
     Dense, LSTM, GRU, Dropout, Input, Conv1D, MaxPooling1D,
     Flatten, TimeDistributed, Bidirectional, LayerNormalization,
     SimpleRNN, Attention, BatchNormalization, Activation,
-    RepeatVector, Reshape, Embedding, MultiHeadAttention,Add,Concatenate,GlobalAveragePooling1D
+    RepeatVector, Reshape, Embedding, MultiHeadAttention, Add, Concatenate, GlobalAveragePooling1D
 )
 import keras
 import numpy as np
 import losses  # To access loss functions and metrics if needed
+from keras import backend as K
 
 def get_model(config, number_of_features):
     model_type = config.get('model_type', 'LSTM').upper()
@@ -23,7 +24,13 @@ def get_model(config, number_of_features):
     elif model_type == 'GRU':
         model = build_gru_model(n_steps_in, n_steps_out, number_of_features, model_params)
     elif model_type == 'TRANSFORMER':
-        model = build_transformer_model(n_steps_in, n_steps_out, number_of_features, model_params)
+        # Retrieve num_time_features from model_params
+        num_time_features = model_params.get('num_time_features')
+        if num_time_features is None:
+            raise ValueError("num_time_features must be specified in model_params for TRANSFORMER model.")
+        model = build_transformer_model_with_temporal_embeddings(
+            n_steps_in, n_steps_out, number_of_features, num_time_features, model_params
+        )
     elif model_type == 'TCN':
         model = build_tcn_model(n_steps_in, n_steps_out, number_of_features, model_params)
     elif model_type == 'CNN_RNN':
@@ -64,110 +71,90 @@ def positional_encoding(seq_len, d_model):
     angle_rads = np.arange(seq_len)[:, np.newaxis] / np.power(
         10000, (2 * (np.arange(d_model)[np.newaxis, :] // 2)) / np.float32(d_model)
     )
-    
+
     # Apply sin to even indices (2i) and cos to odd indices (2i+1)
-    pos_encoding = np.zeros_like(angle_rads)
+    pos_encoding = np.zeros((seq_len, d_model))
     pos_encoding[:, 0::2] = np.sin(angle_rads[:, 0::2])
     pos_encoding[:, 1::2] = np.cos(angle_rads[:, 1::2])
-    return tf.constant(pos_encoding[np.newaxis, ...], dtype=tf.float32)  # Shape: (1, seq_len, d_model)
+    return tf.constant(pos_encoding, dtype=tf.float32)  # Shape: (seq_len, d_model)
 
-def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
+def temporal_encoding(time_features, time_feature_sizes):
+    """
+    Compute temporal embeddings from time features.
+
+    Args:
+        time_features: tensor of shape (batch_size, seq_len, num_time_features), containing the time features ti(k)
+        time_feature_sizes: list or tensor of integers Ni, the total number of values for each time feature i
+
+    Returns:
+        temporal_embeddings: tensor of shape (batch_size, seq_len, num_time_features), containing the di(k)
+    """
+    time_feature_sizes = tf.constant(time_feature_sizes, dtype=tf.float32)
+    time_feature_sizes = tf.reshape(time_feature_sizes, (1, 1, -1))  # Shape: (1, 1, num_time_features)
+    di = (time_features / time_feature_sizes) - 0.5
+    return di
+
+def transformer_encoder(inputs, head_size, num_heads, ff_dim, hidden_dim, dropout=0):
     # Attention and Normalization
     x = MultiHeadAttention(
         key_dim=head_size, num_heads=num_heads, dropout=dropout
     )(inputs, inputs)
     x = Dropout(dropout)(x)
     x = Add()([x, inputs])
-    res = LayerNormalization(epsilon=1e-6)(x)#add and norm
-    
+    res = LayerNormalization(epsilon=1e-6)(x)  # Add and Norm
 
     # Feed Forward Part
     x = Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(res)
     x = Dropout(dropout)(x)
-    x = Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
+    x = Conv1D(filters=hidden_dim, kernel_size=1)(x)
     x = Add()([x, res])
-    x = LayerNormalization(epsilon=1e-6)(x)# add and norm
+    x = LayerNormalization(epsilon=1e-6)(x)  # Add and Norm
     return x
 
-def build_transformer_model(n_steps_in, n_steps_out, number_of_features, model_params):
-        num_heads = model_params.get('num_heads', 7) #tunable
-        head_size = model_params.get('head_size', 7)#tunable
-        ff_dim = model_params.get('ff_dim', 128)
-        dropout_rate = model_params.get('dropout_rate', 0.1)
-        num_transformer_blocks = model_params.get('num_transformer_blocks', 6)  #tunable
-        mlp_units=model_params.get('mlp_units', [128])#tunable
-        mlp_dropout_rate = model_params.get('mlp_dropout_rate', 0.3)
-        inputs = keras.Input(shape=(n_steps_in,number_of_features))
-        x = inputs
-
-        # Generate and add positional encoding
-        pos_encoding = positional_encoding(n_steps_in, number_of_features)
-        x = inputs + pos_encoding  # Add positional encoding to the inputs
-
-        for _ in range(num_transformer_blocks):
-            x = transformer_encoder(x, head_size, num_heads, ff_dim, dropout_rate)
-
-        x = GlobalAveragePooling1D(data_format="channels_last")(x)
-        
-        for dim in mlp_units:
-            x = Dense(dim, activation="relu")(x)
-            x = Dropout(mlp_dropout_rate)(x)
-        outputs = Dense(n_steps_out)(x)
-        return keras.Model(inputs, outputs)
-
-class CLSTokenLayer(tf.keras.layers.Layer):
-    def __init__(self, number_of_features, **kwargs):
-        super(CLSTokenLayer, self).__init__(**kwargs)
-        self.number_of_features = number_of_features
-
-    def build(self, input_shape):
-        # Initialize the CLS token as a trainable weight
-        self.cls_token = self.add_weight(
-            shape=(1, 1, self.number_of_features),
-            initializer="random_normal",
-            trainable=True,
-            name="cls_token"
-        )
-
-    def call(self, inputs):
-        # Expand the CLS token to match the batch size and concatenate it at the end
-        batch_size = tf.shape(inputs)[0]
-        cls_token_batched = tf.tile(self.cls_token, [batch_size, 1, 1])
-        return Concatenate(axis=1)([inputs, cls_token_batched])
-                                   
-def build_transformer_model_cls(n_steps_in, n_steps_out, number_of_features, model_params):
-    num_heads = model_params.get('num_heads', 7)  # tunable
-    head_size = model_params.get('head_size', 7)  # tunable
+def build_transformer_model_with_temporal_embeddings(
+    n_steps_in, n_steps_out, number_of_features, num_time_features, model_params
+):
+    num_heads = model_params.get('num_heads', 7)  # Tunable
+    head_size = model_params.get('head_size', 7)  # Tunable
     ff_dim = model_params.get('ff_dim', 128)
     dropout_rate = model_params.get('dropout_rate', 0.1)
-    num_transformer_blocks = model_params.get('num_transformer_blocks', 6)  # tunable
-    mlp_units = model_params.get('mlp_units', [128])  # tunable
+    num_transformer_blocks = model_params.get('num_transformer_blocks', 6)  # Tunable
+    mlp_units = model_params.get('mlp_units', [128])  # Tunable
     mlp_dropout_rate = model_params.get('mlp_dropout_rate', 0.3)
-    inputs = Input(shape=(n_steps_in, number_of_features))
-    
-   
-    # Concatenate the CLS token to the inputs
-    x = CLSTokenLayer(number_of_features)(inputs)
+    hidden_dim = model_params.get('hidden_dim', 128)  # Dimension of model hidden layer
 
-    # Generate and add positional encoding
-    pos_encoding = positional_encoding(n_steps_in + 1, number_of_features)  # Adjust for the added CLS token
-    x = x + pos_encoding  # Add positional encoding to the inputs with the CLS token
+    # Inputs
+    inputs = keras.Input(shape=(n_steps_in, number_of_features))
+    time_inputs = keras.Input(shape=(n_steps_in, num_time_features))
 
-    # Pass through multiple Transformer blocks
+    # Generate positional encoding
+    pos_encoding = positional_encoding(n_steps_in, hidden_dim)  # Shape: (n_steps_in, hidden_dim)
+    pos_encoding = tf.cast(pos_encoding, dtype=tf.float32)
+
+    # Compute temporal embeddings
+    time_feature_sizes = model_params.get('time_feature_sizes', [2022, 12, 31, 7, 366])
+    temporal_embeddings = temporal_encoding(time_inputs, time_feature_sizes)  # Shape: (batch_size, n_steps_in, num_time_features)
+
+    # Project inputs and temporal embeddings to hidden_dim
+    EX = Dense(hidden_dim)(inputs)  # Shape: (batch_size, n_steps_in, hidden_dim)
+    ET = Dense(hidden_dim)(temporal_embeddings)  # Shape: (batch_size, n_steps_in, hidden_dim)
+
+    # Sum them with positional encoding (broadcasting will handle the addition)
+    x = EX + ET + pos_encoding  # Broadcasting adds pos_encoding to each example in the batch
+
+    # Transformer Blocks
     for _ in range(num_transformer_blocks):
-        x = transformer_encoder(x, head_size, num_heads, ff_dim, dropout_rate)
+        x = transformer_encoder(x, head_size, num_heads, ff_dim, hidden_dim, dropout_rate)
 
-    # Use the CLS token's output for classification or other tasks
-    cls_output = x[:, -1, :]  # Extract the CLS token output
-    
-    # Fully connected layers on top of the CLS token output
+    # Pooling and Output Layers
+    x = GlobalAveragePooling1D(data_format="channels_last")(x)
     for dim in mlp_units:
-        cls_output = Dense(dim, activation="relu")(cls_output)
-        cls_output = Dropout(mlp_dropout_rate)(cls_output)
-    
-    outputs = Dense(n_steps_out)(cls_output)
-    return keras.Model(inputs, outputs)
-    
+        x = Dense(dim, activation="relu")(x)
+        x = Dropout(mlp_dropout_rate)(x)
+    outputs = Dense(n_steps_out)(x)
+
+    # Model with two inputs: features and time features
+    return keras.Model(inputs=[inputs, time_inputs], outputs=outputs)
 
 def build_tcn_model(n_steps_in, n_steps_out, number_of_features, model_params):
     # You need to install keras-tcn: pip install keras-tcn
